@@ -220,7 +220,7 @@
       
       // 🔥 FALLBACK melhorado - abrir WhatsApp mesmo sem autorização
       console.log('🔄 [WHATSAPP] Executando fallback...');
-      var fallbackMessage = generateWhatsAppMessage(userData, source + '_fallback');
+      var fallbackMessage = "Olá! Vim do site m.lima e preciso de ajuda jurídica.";
       var fallbackUrl = 'https://wa.me/' + COMMERCIAL_WHATSAPP + '?text=' + encodeURIComponent(fallbackMessage);
       
       console.log('📱 [WHATSAPP] Fallback - Abrindo WhatsApp direto:', fallbackUrl);
@@ -230,84 +230,221 @@
     }
   }
 
-  // 🔥 MENSAGEM PERSONALIZADA com session_id para tracking
+  // Gera mensagem COM SESSION_ID para o bot identificar
   function generateWhatsAppMessage(userData, source, sessionId) {
-    var baseMessage = "Olá! Vim do site m.lima e gostaria de falar com um advogado.";
+    var baseMessage = "Olá! Vim do site m.lima e preciso de ajuda jurídica urgente.";
+    baseMessage += "\n\nGostaria de falar com um advogado especializado para esclarecer algumas dúvidas importantes sobre minha situação.";
+    baseMessage += "\n\nAgradeço desde já a atenção e aguardo retorno.";
     
-    // Adicionar contexto se disponível
-    if (userData.origem) {
-      baseMessage += "\n\n📍 Origem: " + userData.origem;
+    // Adicionar contexto específico se disponível
+    if (userData.origem && userData.origem !== 'Botão Flutuante') {
+      baseMessage += "\n\n📍 Contexto: " + userData.origem;
     }
     
-    if (source) {
-      baseMessage += "\n🔗 Via: " + source;
-    }
-    
-    // 🔥 IMPORTANTE: Incluir session_id para o bot identificar
+    // 🔧 ESSENCIAL: Session ID para o bot identificar e responder
     if (sessionId) {
       baseMessage += "\n\n🆔 Sessão: " + sessionId;
+      baseMessage += "\n(Este é meu código de identificação para o sistema de atendimento)";
     }
     
     return baseMessage;
   }
 
-  // 🔥 INTERCEPTADOR ROBUSTO - Funciona com qualquer botão WhatsApp
+  // 🔥 INTERCEPTADOR ULTRA-ROBUSTO - Múltiplas estratégias
   function interceptWhatsAppButtons() {
-    console.log('📱 [WHATSAPP] Configurando interceptador robusto...');
+    console.log('📱 [WHATSAPP] Configurando interceptador ultra-robusto...');
     
-    // 🔥 INTERCEPTADOR GLOBAL que pega QUALQUER link do WhatsApp
+    // 🎯 ESTRATÉGIA 1: Event listener com múltiplas verificações
     document.addEventListener('click', function(e) {
       var target = e.target;
       var whatsappElement = null;
+      var interceptReason = '';
       
-      // 🔍 BUSCA em vários níveis - botão flutuante, links, etc.
+      console.log('🔍 [CLICK] Elemento clicado:', target);
+      
+      // 🔍 BUSCA PROFUNDA em vários níveis
       var attempts = 0;
-      while (target && attempts < 5) {
-        // Verifica se é botão flutuante do react-whatsapp-button
-        if (target.getAttribute && target.getAttribute('data-testid') === 'floating-whatsapp-button') {
-          whatsappElement = target;
+      var searchTarget = target;
+      
+      while (searchTarget && attempts < 8) {
+        // Verificação 1: data-testid (react-whatsapp-button)
+        if (searchTarget.getAttribute && searchTarget.getAttribute('data-testid') === 'floating-whatsapp-button') {
+          whatsappElement = searchTarget;
+          interceptReason = 'data-testid=floating-whatsapp-button';
           break;
         }
         
-        // Verifica se é link do WhatsApp
-        if (target.href && target.href.includes('wa.me')) {
-          whatsappElement = target;
+        // Verificação 2: href com wa.me
+        if (searchTarget.href && searchTarget.href.includes('wa.me')) {
+          whatsappElement = searchTarget;
+          interceptReason = 'href-wa.me';
           break;
         }
         
-        // Verifica se tem classe relacionada ao WhatsApp
-        if (target.className && typeof target.className === 'string') {
-          if (target.className.includes('whatsapp') || target.className.includes('wa-')) {
-            whatsappElement = target;
+        // Verificação 3: classes WhatsApp
+        if (searchTarget.className && typeof searchTarget.className === 'string') {
+          var className = searchTarget.className.toLowerCase();
+          if (className.includes('whatsapp') || className.includes('wa-') || className.includes('float')) {
+            whatsappElement = searchTarget;
+            interceptReason = 'className-whatsapp';
             break;
           }
         }
         
-        target = target.parentElement;
+        // Verificação 4: ID relacionado
+        if (searchTarget.id && typeof searchTarget.id === 'string') {
+          var id = searchTarget.id.toLowerCase();
+          if (id.includes('whatsapp') || id.includes('wa-') || id.includes('float')) {
+            whatsappElement = searchTarget;
+            interceptReason = 'id-whatsapp';
+            break;
+          }
+        }
+        
+        // Verificação 5: atributos React específicos
+        var attributes = searchTarget.attributes || [];
+        for (var i = 0; i < attributes.length; i++) {
+          var attr = attributes[i];
+          if (attr.name && attr.name.includes('whatsapp')) {
+            whatsappElement = searchTarget;
+            interceptReason = 'attribute-whatsapp';
+            break;
+          }
+        }
+        
+        if (whatsappElement) break;
+        
+        searchTarget = searchTarget.parentElement;
         attempts++;
       }
       
       if (whatsappElement) {
-        console.log('🔥 [WHATSAPP] Botão interceptado!', whatsappElement);
+        console.log('🔥 [WHATSAPP] BOTÃO INTERCEPTADO!');
+        console.log('📍 Razão:', interceptReason);
+        console.log('🎯 Elemento:', whatsappElement);
+        console.log('🏷️ TagName:', whatsappElement.tagName);
+        console.log('🎨 ClassName:', whatsappElement.className);
+        console.log('🆔 ID:', whatsappElement.id);
         
-        // Para o evento ANTES do React ou qualquer handler processar
+        // Para TODOS os eventos
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
         
-        // Fazer pré-autorização e abrir WhatsApp
+        // Executar autorização
         authorizeWhatsAppSession('floating_button', {
-          origem: 'Botão Flutuante',
+          origem: 'Botão Flutuante Interceptado',
           site: 'm.lima',
-          intercepted_element: whatsappElement.tagName + (whatsappElement.className ? '.' + whatsappElement.className : '')
+          intercept_method: interceptReason,
+          element_info: {
+            tagName: whatsappElement.tagName,
+            className: whatsappElement.className,
+            id: whatsappElement.id
+          }
         });
         
         return false;
       }
     }, { 
-      capture: true, // Captura o evento ANTES de chegar ao React
-      passive: false // Permite preventDefault
+      capture: true,
+      passive: false
     });
+    
+    // 🎯 ESTRATÉGIA 2: Observer para botões criados dinamicamente
+    var observer = new MutationObserver(function(mutations) {
+      mutations.forEach(function(mutation) {
+        if (mutation.type === 'childList') {
+          mutation.addedNodes.forEach(function(node) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              // Procurar novos botões WhatsApp
+              var selectors = [
+                '[data-testid="floating-whatsapp-button"]',
+                'a[href*="wa.me"]',
+                '[class*="whatsapp"]',
+                '[class*="float"]',
+                '[id*="whatsapp"]',
+                'button[class*="whatsapp"]'
+              ];
+              
+              selectors.forEach(function(selector) {
+                try {
+                  var found = node.querySelectorAll ? node.querySelectorAll(selector) : [];
+                  if (found.length > 0) {
+                    console.log('📱 [OBSERVER] Novos botões WhatsApp detectados:', selector, found.length);
+                    
+                    // Adicionar evento específico a cada novo botão
+                    found.forEach(function(btn) {
+                      btn.addEventListener('click', function(e) {
+                        console.log('🔥 [OBSERVER] Botão WhatsApp clicado via Observer!');
+                        e.preventDefault();
+                        e.stopPropagation();
+                        e.stopImmediatePropagation();
+                        
+                        authorizeWhatsAppSession('floating_button_observer', {
+                          origem: 'Botão via Observer',
+                          site: 'm.lima',
+                          selector_matched: selector
+                        });
+                      }, { capture: true, passive: false });
+                    });
+                  }
+                } catch(e) {
+                  // Ignorar erros de seletor
+                }
+              });
+              
+              // Verificar se o próprio nó é um botão WhatsApp
+              if (node.getAttribute && node.getAttribute('data-testid') === 'floating-whatsapp-button') {
+                console.log('📱 [OBSERVER] Botão WhatsApp direto detectado!');
+                node.addEventListener('click', function(e) {
+                  console.log('🔥 [OBSERVER] Botão direto clicado!');
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.stopImmediatePropagation();
+                  
+                  authorizeWhatsAppSession('floating_button_direct', {
+                    origem: 'Botão Direto via Observer',
+                    site: 'm.lima'
+                  });
+                }, { capture: true, passive: false });
+              }
+            }
+          });
+        }
+      });
+    });
+    
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+    
+    // 🎯 ESTRATÉGIA 3: Interceptação por timer (fallback)
+    var checkInterval = setInterval(function() {
+      var floatingBtn = document.querySelector('[data-testid="floating-whatsapp-button"]');
+      if (floatingBtn && !floatingBtn.dataset.intercepted) {
+        console.log('📱 [TIMER] Botão WhatsApp encontrado por timer!');
+        floatingBtn.dataset.intercepted = 'true';
+        
+        floatingBtn.addEventListener('click', function(e) {
+          console.log('🔥 [TIMER] Botão via timer clicado!');
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+          
+          authorizeWhatsAppSession('floating_button_timer', {
+            origem: 'Botão via Timer',
+            site: 'm.lima'
+          });
+        }, { capture: true, passive: false });
+      }
+    }, 2000);
+    
+    // Limpar timer após 30 segundos
+    setTimeout(function() {
+      clearInterval(checkInterval);
+      console.log('⏰ [TIMER] Timer de interceptação finalizado');
+    }, 30000);
     
     // 🔥 INTERCEPTADOR ADICIONAL para links criados dinamicamente
     var observer = new MutationObserver(function(mutations) {
@@ -405,7 +542,7 @@
     }
   };
 
-  // 🔥 API EXPANDIDA do WhatsApp
+  // 🔥 API EXPANDIDA do WhatsApp com DEBUG
   window.WhatsAppIntegration = {
     test: function(source) {
       console.log('🧪 Testando integração WhatsApp...');
@@ -442,6 +579,100 @@
       localStorage.removeItem('whatsapp_session_id');
       localStorage.removeItem('whatsapp_authorized_at');
       console.log('🧹 Sessão WhatsApp limpa');
+    },
+    // 🔥 NOVA FUNÇÃO DE DEBUG
+    debugElements: function() {
+      console.log('🔍 [DEBUG] Procurando elementos WhatsApp na página...');
+      
+      var selectors = [
+        '[data-testid="floating-whatsapp-button"]',
+        'a[href*="wa.me"]',
+        '[class*="whatsapp"]',
+        '[class*="float"]',
+        '[id*="whatsapp"]',
+        'button[class*="whatsapp"]'
+      ];
+      
+      selectors.forEach(function(selector) {
+        try {
+          var elements = document.querySelectorAll(selector);
+          if (elements.length > 0) {
+            console.log(`✅ Encontrado ${elements.length} elemento(s) com: ${selector}`);
+            elements.forEach(function(el, index) {
+              console.log(`   [${index}] TagName: ${el.tagName}, Class: "${el.className}", ID: "${el.id}"`);
+              console.log(`   [${index}] Texto: "${el.textContent ? el.textContent.substring(0, 50) : 'N/A'}"`);
+              console.log(`   [${index}] Elemento:`, el);
+            });
+          } else {
+            console.log(`❌ Nenhum elemento encontrado para: ${selector}`);
+          }
+        } catch(e) {
+          console.log(`⚠️ Erro ao buscar: ${selector} - ${e.message}`);
+        }
+      });
+      
+      // Buscar por texto "WhatsApp" em botões
+      var allButtons = document.querySelectorAll('button, a');
+      var whatsappButtons = [];
+      allButtons.forEach(function(btn) {
+        var text = (btn.textContent || '').toLowerCase();
+        var title = (btn.title || '').toLowerCase();
+        var ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+        
+        if (text.includes('whatsapp') || title.includes('whatsapp') || ariaLabel.includes('whatsapp')) {
+          whatsappButtons.push(btn);
+        }
+      });
+      
+      if (whatsappButtons.length > 0) {
+        console.log(`✅ Encontrado ${whatsappButtons.length} botão(ões) com texto "WhatsApp":`);
+        whatsappButtons.forEach(function(btn, index) {
+          console.log(`   [${index}] Elemento:`, btn);
+        });
+      } else {
+        console.log(`❌ Nenhum botão com texto "WhatsApp" encontrado`);
+      }
+      
+      return {
+        total_found: selectors.reduce((acc, sel) => acc + document.querySelectorAll(sel).length, 0),
+        whatsapp_text_buttons: whatsappButtons.length,
+        selectors_tested: selectors.length
+      };
+    },
+    // 🔥 FUNÇÃO PARA FORÇAR INTERCEPTAÇÃO DE ELEMENTO ESPECÍFICO
+    forceIntercept: function(elementSelector) {
+      console.log('🎯 [FORCE] Forçando interceptação em:', elementSelector);
+      
+      var element = document.querySelector(elementSelector);
+      if (!element) {
+        console.log('❌ [FORCE] Elemento não encontrado:', elementSelector);
+        return false;
+      }
+      
+      console.log('✅ [FORCE] Elemento encontrado:', element);
+      
+      // Adicionar listener específico
+      element.addEventListener('click', function(e) {
+        console.log('🔥 [FORCE] Elemento interceptado via forceIntercept!');
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        
+        authorizeWhatsAppSession('force_intercept', {
+          origem: 'Interceptação Forçada',
+          site: 'm.lima',
+          selector: elementSelector,
+          element_info: {
+            tagName: element.tagName,
+            className: element.className,
+            id: element.id,
+            text: element.textContent
+          }
+        });
+      }, { capture: true, passive: false });
+      
+      console.log('✅ [FORCE] Listener adicionado com sucesso!');
+      return true;
     }
   };
 
