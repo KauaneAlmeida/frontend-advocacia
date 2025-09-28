@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teste Autorização WhatsApp</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; background: #f0f0f0; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .button { background: #25D366; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 10px 0; }
+        .button:hover { background: #128C7E; }
+        .log { background: #f8f8f8; padding: 15px; border-radius: 5px; margin: 10px 0; font-family: monospace; font-size: 12px; max-height: 300px; overflow-y: auto; }
+        .success { background: #d4edda; border-left: 4px solid #28a745; }
+        .error { background: #f8d7da; border-left: 4px solid #dc3545; }
+        .warning { background: #fff3cd; border-left: 4px solid #ffc107; }
+        input { width: 100%; padding: 10px; margin: 5px 0; border: 1px solid #ddd; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Teste de Autorização WhatsApp</h1>
+        
+        <div>
+            <h3>Configuração</h3>
+            <input type="text" id="backendUrl" placeholder="URL do Backend" value="https://law-firm-backend-936902782519-936902782519.us-central1.run.app">
+            <input type="text" id="whatsappNumber" placeholder="Número WhatsApp Comercial" value="5511918368812">
+        </div>
+        
+        <div>
+            <h3>Testes</h3>
+            <button class="button" onclick="testAuthorization('floating_button')">🔘 Testar Botão Flutuante</button>
+            <button class="button" onclick="testAuthorization('landing_chat', {name: 'João Teste', email: 'joao@test.com'})">💬 Testar Chat Landing</button>
+            <button class="button" onclick="checkBackendHealth()">🏥 Verificar Backend</button>
+            <button class="button" onclick="clearLogs()">🧹 Limpar Logs</button>
+        </div>
+        
+        <div id="logs" class="log"></div>
+    </div>
+
+    <script>
+        function log(message, type = 'info') {
+            const logs = document.getElementById('logs');
+            const timestamp = new Date().toLocaleTimeString();
+            const className = type === 'success' ? 'success' : type === 'error' ? 'error' : type === 'warning' ? 'warning' : '';
+            
+            logs.innerHTML += `<div class="${className}">[${timestamp}] ${message}</div>`;
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+            log('Logs limpos', 'info');
+        }
+
+        async function checkBackendHealth() {
+            const backendUrl = document.getElementById('backendUrl').value;
+            log('🔍 Verificando saúde do backend...', 'info');
+            
+            try {
+                const response = await fetch(`${backendUrl}/health`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    log(`✅ Backend saudável: ${JSON.stringify(data)}`, 'success');
+                } else {
+                    log(`⚠️ Backend com problemas: ${response.status}`, 'warning');
+                }
+            } catch (error) {
+                log(`❌ Erro ao conectar backend: ${error.message}`, 'error');
+            }
+        }
+
+        async function testAuthorization(source, userData = {}) {
+            const backendUrl = document.getElementById('backendUrl').value;
+            const whatsappNumber = document.getElementById('whatsappNumber').value;
+            
+            const sessionId = 'test_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            
+            const requestData = {
+                session_id: sessionId,
+                phone_number: whatsappNumber, // ✅ CORRIGIDO: Usar número comercial
+                source: source,
+                user_data: {
+                    ...userData,
+                    page_url: window.location.href,
+                    timestamp: new Date().toISOString(),
+                    user_agent: navigator.userAgent,
+                    referrer: document.referrer || 'direct',
+                    test: true
+                }
+            };
+
+            log(`🚀 Testando autorização: ${source}`, 'info');
+            log(`📡 Dados: ${JSON.stringify(requestData, null, 2)}`, 'info');
+
+            try {
+                const response = await fetch(`${backendUrl}/api/v1/whatsapp/authorize`, {
+                    method: 'POST',
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify(requestData)
+                });
+
+                log(`📨 Response status: ${response.status}`, response.ok ? 'success' : 'error');
+
+                const responseText = await response.text();
+                log(`📄 Response body: ${responseText}`, 'info');
+
+                if (response.ok) {
+                    const data = JSON.parse(responseText);
+                    log(`✅ AUTORIZAÇÃO SUCESSO!`, 'success');
+                    log(`🆔 Session ID: ${data.session_id}`, 'success');
+                    log(`📱 WhatsApp URL: ${data.whatsapp_url}`, 'success');
+                    
+                    // Simular abertura do WhatsApp
+                    const message = `Olá! Teste de autorização bem-sucedido. Session: ${sessionId}`;
+                    const whatsappUrl = `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(message)}`;
+                    
+                    log(`📱 Abrindo WhatsApp...`, 'info');
+                    window.open(whatsappUrl, '_blank');
+                    
+                } else {
+                    log(`❌ AUTORIZAÇÃO FALHOU: ${response.status}`, 'error');
+                    log(`🔍 Resposta: ${responseText}`, 'error');
+                }
+
+            } catch (error) {
+                log(`❌ ERRO DE REDE: ${error.message}`, 'error');
+            }
+        }
+
+        // Log inicial
+        log('🔧 Sistema de teste carregado', 'info');
+        log('💡 Use os botões acima para testar a autorização WhatsApp', 'info');
+    </script>
+</body>
+</html>
