@@ -1,4 +1,4 @@
-// chat.js - Sistema completo de Chat + Integração WhatsApp CORRIGIDO
+// chat.js - Sistema corrigido com arquitetura separada v4.0
 (function(){
   // ============================================================================
   // CONFIGURAÇÃO E UTILITÁRIOS
@@ -16,11 +16,73 @@
                      || 'https://law-firm-backend-936902782519-936902782519.us-central1.run.app';
 
   // SEU NÚMERO COMERCIAL DO WHATSAPP (ALTERE AQUI)
-  var COMMERCIAL_WHATSAPP = "5511918368812"; // ⚠️ SUBSTITUA PELO SEU NÚMERO
+  var COMMERCIAL_WHATSAPP = "5511918368812";
 
   // ============================================================================
-  // SISTEMA DE CHAT
+  // SISTEMA DE VALIDAÇÃO RIGOROSA
   // ============================================================================
+
+  var Validators = {
+    name: function(name) {
+      if (!name || name.trim().length < 3) return false;
+      var words = name.trim().split(/\s+/);
+      if (words.length < 2) return false;
+      // Não pode conter números
+      if (/\d/.test(name)) return false;
+      // Deve conter pelo menos letras
+      if (!/[a-zA-ZÀ-ÿ]/.test(name)) return false;
+      return true;
+    },
+
+    phone: function(phone) {
+      if (!phone) return false;
+      // Remove tudo que não é número
+      var numbers = phone.replace(/\D/g, '');
+      // Aceita: 11999999999, 5511999999999
+      return numbers.length === 11 || (numbers.length === 13 && numbers.startsWith('55'));
+    },
+
+    email: function(email) {
+      if (!email) return false;
+      var emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      return emailRegex.test(email.trim());
+    },
+
+    legalArea: function(area) {
+      if (!area) return false;
+      var normalized = area.trim().toLowerCase();
+      return normalized === 'penal' || normalized === 'saude' || 
+             normalized === 'saúde' || normalized.includes('penal') ||
+             normalized.includes('saude') || normalized.includes('saúde');
+    },
+
+    description: function(desc) {
+      return desc && desc.trim().length >= 20;
+    }
+  };
+
+  // ============================================================================
+  // FLUXO 1: CHAT DA LANDING PAGE (SEM WHATSAPP)
+  // ============================================================================
+
+  // Estado global do chat
+  var chatState = {
+    isLoading: false,
+    rateLimited: false,
+    rateLimitTimer: null,
+    currentSessionId: null,
+    conversationData: {},
+    retryCount: 0,
+    lastCorrelationId: null
+  };
+
+  // Constantes de configuração
+  var CONFIG = {
+    REQUEST_TIMEOUT: 10000,
+    RATE_LIMIT_COOLDOWN: 30000,
+    MAX_RETRY_ATTEMPTS: 1,
+    TYPING_ANIMATION_DELAY: 2000
+  };
 
   // Monta a interface do chat
   function mountChatUI() {
@@ -33,11 +95,17 @@
     
     root.innerHTML = `
       <div class="chat-container" role="dialog" aria-label="Chat">
-        <div class="chat-header">💬 Chat Advocacia — Escritório m.lima</div>
+        <div class="chat-header">
+          💬 Chat Advocacia — Escritório m.lima
+          <div id="progress-bar" class="progress-bar" style="display: none;">
+            <div id="progress-fill" class="progress-fill"></div>
+          </div>
+        </div>
         <div id="chat-messages" class="messages"></div>
         <div class="input-area">
           <input id="chat-input" placeholder="Digite sua mensagem... ⚖️" aria-label="Mensagem"/>
           <button id="chat-send">Enviar</button>
+          <div id="rate-limit-timer" class="rate-limit-timer" style="display: none;"></div>
         </div>
       </div>
     `;
@@ -45,20 +113,60 @@
     // Event listeners do chat
     document.getElementById('chat-send').addEventListener('click', sendChatMessage);
     document.getElementById('chat-input').addEventListener('keypress', function(e){ 
-      if(e.key==='Enter') sendChatMessage(); 
+      if(e.key==='Enter' && !chatState.isLoading && !chatState.rateLimited) {
+        sendChatMessage(); 
+      }
     });
     
+    // Restaurar sessão se existir
+    restoreSession();
+    
     // Mensagem inicial
-    addChatMessage("Olá! Para começar nosso atendimento, digite uma saudação como 'oi'.", 'bot');
+    addChatMessage("Olá! Bem-vindo-pronto para conversar?", 'bot');
+  }
+
+  // Sistema de persistência de sessão
+  function saveSession() {
+    try {
+      var sessionData = {
+        sessionId: chatState.currentSessionId,
+        conversationData: chatState.conversationData,
+        timestamp: new Date().toISOString()
+      };
+      localStorage.setItem('chat_session_data', JSON.stringify(sessionData));
+    } catch(e) {
+      console.warn('Não foi possível salvar sessão:', e);
+    }
+  }
+
+  function restoreSession() {
+    try {
+      var savedData = localStorage.getItem('chat_session_data');
+      if (savedData) {
+        var sessionData = JSON.parse(savedData);
+        var sessionAge = Date.now() - new Date(sessionData.timestamp).getTime();
+        if (sessionAge < 3600000) { // 1 hora
+          chatState.currentSessionId = sessionData.sessionId;
+          chatState.conversationData = sessionData.conversationData || {};
+          console.log('✅ Sessão restaurada:', chatState.currentSessionId);
+        }
+      }
+    } catch(e) {
+      console.warn('Não foi possível restaurar sessão:', e);
+    }
   }
 
   // Adiciona mensagem na interface do chat
-  function addChatMessage(text, sender){
+  function addChatMessage(text, sender, messageType = 'normal'){
     var messagesContainer = document.getElementById('chat-messages');
     if(!messagesContainer) return;
     
     var messageDiv = document.createElement('div');
     messageDiv.className = 'message ' + (sender === 'user' ? 'user' : 'bot');
+    
+    if (messageType === 'error') messageDiv.classList.add('error-message');
+    if (messageType === 'success') messageDiv.classList.add('success-message');
+    if (messageType === 'warning') messageDiv.classList.add('warning-message');
 
     var avatar = document.createElement('div');
     avatar.className = 'avatar';
@@ -78,14 +186,15 @@
 
     messagesContainer.appendChild(messageDiv);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    
+    saveSession();
   }
 
-  // Mostra indicador de "digitando" e depois a resposta
-  function showBotTypingAndReply(message){
+  // Sistema de loading com animação
+  function showBotTypingAndReply(message, messageType = 'normal', delay = CONFIG.TYPING_ANIMATION_DELAY){
     const messagesContainer = document.getElementById('chat-messages');
     if(!messagesContainer) return;
 
-    // Indicador de digitando
     const typingDiv = document.createElement('div');
     typingDiv.classList.add('message', 'bot', 'typing-message');
     typingDiv.innerHTML = `
@@ -97,72 +206,292 @@
     messagesContainer.appendChild(typingDiv);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
-    // Após 2 segundos, remove o "digitando" e mostra a resposta
     setTimeout(() => {
       typingDiv.remove();
-      addChatMessage(message, 'bot');
-    }, 2000);
+      addChatMessage(message, 'bot', messageType);
+    }, delay);
   }
 
-  // Gerenciamento de sessão do chat
-  function setChatSessionId(id){ 
-    try{ localStorage.setItem('chat_session_id', id); }catch(e){} 
-  }
-  
-  function getChatSessionId(){ 
-    try{ return localStorage.getItem('chat_session_id'); }catch(e){ return null; } 
+  // Sistema de barra de progresso
+  function updateProgressBar(confidenceScore) {
+    var progressBar = document.getElementById('progress-bar');
+    var progressFill = document.getElementById('progress-fill');
+    
+    if (!progressBar || !progressFill) return;
+    
+    if (confidenceScore > 0) {
+      progressBar.style.display = 'block';
+      var percentage = Math.min(confidenceScore * 100, 100);
+      progressFill.style.width = percentage + '%';
+      
+      if (percentage >= 100) {
+        setTimeout(() => {
+          progressBar.style.display = 'none';
+        }, 3000);
+      }
+    } else {
+      progressBar.style.display = 'none';
+    }
   }
 
-  // Envio de mensagens do chat
+  // Sistema de rate limiting
+  function handleRateLimit() {
+    chatState.rateLimited = true;
+    var input = document.getElementById('chat-input');
+    var sendBtn = document.getElementById('chat-send');
+    var timerDiv = document.getElementById('rate-limit-timer');
+    
+    if (input) input.disabled = true;
+    if (sendBtn) sendBtn.disabled = true;
+    if (timerDiv) timerDiv.style.display = 'block';
+    
+    var remainingTime = CONFIG.RATE_LIMIT_COOLDOWN / 1000;
+    
+    var countdown = setInterval(() => {
+      if (timerDiv) {
+        timerDiv.textContent = `Aguarde ${remainingTime}s para enviar nova mensagem`;
+      }
+      
+      remainingTime--;
+      
+      if (remainingTime <= 0) {
+        clearInterval(countdown);
+        chatState.rateLimited = false;
+        
+        if (input) input.disabled = false;
+        if (sendBtn) sendBtn.disabled = false;
+        if (timerDiv) {
+          timerDiv.style.display = 'none';
+          timerDiv.textContent = '';
+        }
+      }
+    }, 1000);
+    
+    chatState.rateLimitTimer = countdown;
+  }
+
+  // ✅ CÓDIGO CORRIGIDO:
+function isDataCollectionCompleted(responseData) {
+    // Backend retorna lead_data, NÃO extracted_data
+    var leadData = responseData.lead_data || {};
+    
+    var hasName = leadData.identification && leadData.identification.trim().length > 0;
+    var hasContact = leadData.contact_info && leadData.contact_info.trim().length > 0;
+    var hasArea = leadData.area_qualification && leadData.area_qualification.trim().length > 0;
+    var hasDetails = leadData.case_details && leadData.case_details.trim().length > 0;
+    
+    var flowCompleted = responseData.flow_completed === true;
+    var completedState = responseData.current_step === 'completed';
+    
+    console.log('🔍 Verificação de coleta completa:', {
+      hasName, 
+      hasContact, 
+      hasArea, 
+      hasDetails,
+      flowCompleted, 
+      completedState,
+      leadData: leadData  // Debug
+    });
+    
+    // Fluxo completo = backend marcou como completed OU tem todos os dados essenciais
+    return flowCompleted || (hasName && hasContact && hasArea && hasDetails);
+}
+  // CORRIGIDO: Sistema de tratamento APENAS para chat da landing
+  function handleResponseType(responseData) {
+    var responseType = responseData.response_type || 'web_intelligent';
+    
+    switch(responseType) {
+      case 'rate_limited':
+        console.log('⚠️ Rate limit detectado');
+        handleRateLimit();
+        showBotTypingAndReply(
+          "Você está enviando muitas mensagens. Aguarde um momento para continuar.",
+          'warning'
+        );
+        break;
+        
+      case 'error_recovery':
+        console.log('🔄 Erro recuperável detectado');
+        showBotTypingAndReply(
+          responseData.response || "Houve um pequeno problema, mas podemos continuar. Tente reformular sua mensagem.",
+          'warning'
+        );
+        break;
+        
+      case 'system_error':
+        console.log('❌ Erro de sistema detectado');
+        showBotTypingAndReply(
+          "Ocorreu um erro temporário. Nossa equipe foi notificada. Tente novamente em alguns minutos.",
+          'error'
+        );
+        break;
+        
+      case 'web_intelligent':
+      default:
+        console.log('✅ Resposta normal processada');
+        var message = responseData.response || responseData.reply || responseData.question || 
+                     '🤔 Desculpe, não consegui processar sua mensagem adequadamente.';
+        
+        // CORRIGIDO: Se dados completos, mostrar APENAS mensagem de sucesso
+        if (isDataCollectionCompleted(responseData)) {
+          showDataCollectionCompleted(message);
+        } else {
+          showBotTypingAndReply(message);
+        }
+        
+        if (responseData.confidence_score) {
+          updateProgressBar(responseData.confidence_score);
+        }
+        break;
+    }
+    
+    if (responseData.correlation_id) {
+      chatState.lastCorrelationId = responseData.correlation_id;
+    }
+  }
+
+  // NOVO: Mensagem FINAL simples - SEM botões WhatsApp
+  function showDataCollectionCompleted(message) {
+    var successMessage = message + "\n\n✅ Obrigado! Suas informações foram registradas com sucesso. Nossa equipe analisará seu caso e entrará em contato em breve.";
+    
+    showBotTypingAndReply(successMessage, 'success');
+  }
+    
+  // Sistema de requisição com timeout
+  async function makeRequestWithTimeout(url, options, timeout = CONFIG.REQUEST_TIMEOUT) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('Request timeout');
+      }
+      throw error;
+    }
+  }
+
+  // Sistema de envio de mensagens do chat
   async function sendChatMessage(){
     var input = document.getElementById('chat-input');
     var text = (input.value || '').trim();
-    if(!text) return;
+    
+    if(!text || chatState.isLoading || chatState.rateLimited) return;
+    
+    chatState.isLoading = true;
+    var sendBtn = document.getElementById('chat-send');
+    if (sendBtn) {
+      sendBtn.disabled = true;
+      sendBtn.textContent = 'Enviando...';
+    }
     
     addChatMessage(text, 'user');
     input.value = '';
 
+    if (!chatState.currentSessionId) {
+      chatState.currentSessionId = 'web_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    }
+
     var payload = { 
       message: text, 
-      session_id: getChatSessionId() || ('web_' + Date.now()) 
+      session_id: chatState.currentSessionId,
+      user_data: chatState.conversationData
     };
 
     try {
-      var response = await fetch(API_BASE_URL + '/api/v1/conversation/respond', {
+      console.log('📡 Enviando mensagem:', payload);
+      
+      var response = await makeRequestWithTimeout(API_BASE_URL + '/api/v1/conversation/respond', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
         body: JSON.stringify(payload)
       });
       
-      if(!response.ok) throw new Error('Response not ok: ' + response.status);
+      if(!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
       
       var data = await response.json();
-      if(data.session_id) setChatSessionId(data.session_id);
+      console.log('📨 Resposta recebida:', data);
       
-      var botMessage = data.response || data.reply || data.question || '🤔 O bot não respondeu.';
-      showBotTypingAndReply(botMessage);
+      if(data.session_id) {
+        chatState.currentSessionId = data.session_id;
+      }
+      
+      if (data.lead_data) {
+    chatState.conversationData = { ...chatState.conversationData, ...data.lead_data };
+    }
+      
+      chatState.retryCount = 0;
+      handleResponseType(data);
       
     } catch(error) {
-      console.warn('Chat API falhou, usando fallback:', error);
-      showBotTypingAndReply("⚠️ Não consegui conectar com o servidor. Tente novamente em alguns minutos.");
+      console.error('❌ Erro na requisição:', error);
+      
+      if (chatState.retryCount < CONFIG.MAX_RETRY_ATTEMPTS && 
+          (error.message.includes('timeout') || error.message.includes('network'))) {
+        
+        chatState.retryCount++;
+        console.log(`🔄 Tentativa ${chatState.retryCount} de ${CONFIG.MAX_RETRY_ATTEMPTS}`);
+        
+        showBotTypingAndReply(
+          `Conexão instável. Tentando novamente... (${chatState.retryCount}/${CONFIG.MAX_RETRY_ATTEMPTS})`,
+          'warning',
+          1000
+        );
+        
+        setTimeout(() => {
+          input.value = text;
+          sendChatMessage();
+        }, 2000);
+        
+      } else {
+        var errorMessage = "⚠️ Não consegui conectar com o servidor. ";
+        
+        if (error.message.includes('timeout')) {
+          errorMessage += "A conexão demorou muito para responder. Tente novamente.";
+        } else if (error.message.includes('rate_limited')) {
+          errorMessage += "Muitas mensagens enviadas. Aguarde um momento.";
+          handleRateLimit();
+        } else {
+          errorMessage += "Verifique sua conexão e tente novamente em alguns minutos.";
+        }
+        
+        showBotTypingAndReply(errorMessage, 'error');
+        chatState.retryCount = 0;
+      }
+    } finally {
+      chatState.isLoading = false;
+      if (sendBtn) {
+        sendBtn.disabled = false;
+        sendBtn.textContent = 'Enviar';
+      }
     }
   }
 
   // ============================================================================
-  // INTEGRAÇÃO WHATSAPP - VERSÃO CORRIGIDA
+  // FLUXO 2: INTEGRAÇÃO WHATSAPP (APENAS PARA BOTÕES EXTERNOS)
   // ============================================================================
 
-  // 🔥 FUNÇÃO PRINCIPAL CORRIGIDA - Autoriza e abre WhatsApp
+  // CORRIGIDO: Autoriza sessão e abre WhatsApp (apenas para botões da página)
   async function authorizeWhatsAppSession(source, userData = {}) {
     console.log('🚀 [WHATSAPP] Iniciando autorização...', { source, userData });
     
-    // Gerar session_id único para WhatsApp
     var sessionId = 'whatsapp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
     
-    // 🔧 DADOS COMPLETOS para autorização - PHONE_NUMBER OBRIGATÓRIO
     var requestData = {
       session_id: sessionId,
-      phone_number: COMMERCIAL_WHATSAPP, // ✅ CORRIGIDO: Usar o número comercial
+      phone_number: COMMERCIAL_WHATSAPP,
       source: source,
       user_data: {
         ...userData,
@@ -177,15 +506,13 @@
     try {
       console.log('📡 [WHATSAPP] Enviando pré-autorização...', requestData);
       
-      // 🔥 CORREÇÃO: Endpoint correto + timeout
-      var response = await fetch(API_BASE_URL + '/api/v1/whatsapp/authorize', {
+      var response = await makeRequestWithTimeout(API_BASE_URL + '/api/v1/whatsapp/authorize', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
-        body: JSON.stringify(requestData),
-        timeout: 10000 // 10 segundos timeout
+        body: JSON.stringify(requestData)
       });
       
       console.log('📡 [WHATSAPP] Response status:', response.status);
@@ -194,14 +521,12 @@
         var data = await response.json();
         console.log('✅ [WHATSAPP] Pré-autorização realizada:', data);
         
-        // Abrir WhatsApp com mensagem personalizada
         var message = generateWhatsAppMessage(userData, source, sessionId);
         var whatsappUrl = 'https://wa.me/' + COMMERCIAL_WHATSAPP + '?text=' + encodeURIComponent(message);
         
         console.log('📱 [WHATSAPP] Abrindo WhatsApp:', whatsappUrl);
         window.open(whatsappUrl, '_blank');
         
-        // 🔥 SALVAR sessão para tracking
         try {
           localStorage.setItem('whatsapp_session_id', sessionId);
           localStorage.setItem('whatsapp_authorized_at', new Date().toISOString());
@@ -218,9 +543,16 @@
     } catch (error) {
       console.error('❌ [WHATSAPP] Erro na pré-autorização:', error);
       
-      // 🔥 FALLBACK melhorado - abrir WhatsApp mesmo sem autorização
       console.log('🔄 [WHATSAPP] Executando fallback...');
-      var fallbackMessage = "Olá! Vim do site m.lima e preciso de ajuda jurídica.";
+      var fallbackMessage = "Olá! Vim do site m.lima e preciso de ajuda jurídica urgente.";
+      
+      if (userData && Object.keys(userData).length > 0) {
+        fallbackMessage += "\n\nDados disponíveis:";
+        Object.entries(userData).forEach(([key, value]) => {
+          fallbackMessage += `\n• ${key}: ${value}`;
+        });
+      }
+      
       var fallbackUrl = 'https://wa.me/' + COMMERCIAL_WHATSAPP + '?text=' + encodeURIComponent(fallbackMessage);
       
       console.log('📱 [WHATSAPP] Fallback - Abrindo WhatsApp direto:', fallbackUrl);
@@ -230,58 +562,60 @@
     }
   }
 
-  // Gera mensagem COM SESSION_ID para o bot identificar
+  // Gera mensagem para WhatsApp COM session_id
   function generateWhatsAppMessage(userData, source, sessionId) {
     var baseMessage = "Olá! Vim do site m.lima e preciso de ajuda jurídica urgente.";
     baseMessage += "\n\nGostaria de falar com um advogado especializado para esclarecer algumas dúvidas importantes sobre minha situação.";
-    baseMessage += "\n\nAgradeço desde já a atenção e aguardo retorno.";
     
-    // Adicionar contexto específico se disponível
+    if (userData && Object.keys(userData).length > 0) {
+      baseMessage += "\n\n📋 Informações iniciais:";
+      Object.entries(userData).forEach(([key, value]) => {
+        var label = key === 'name' ? 'Nome' : 
+                   key === 'phone' ? 'Telefone' : 
+                   key === 'email' ? 'Email' : 
+                   key === 'legal_area' ? 'Área Jurídica' : key;
+        baseMessage += `\n• ${label}: ${value}`;
+      });
+    }
+    
     if (userData.origem && userData.origem !== 'Botão Flutuante') {
       baseMessage += "\n\n📍 Contexto: " + userData.origem;
     }
     
-    // 🔧 ESSENCIAL: Session ID para o bot identificar e responder
+    baseMessage += "\n\nAgradeço desde já a atenção e aguardo retorno.";
+    
     if (sessionId) {
       baseMessage += "\n\n🆔 Sessão: " + sessionId;
-      baseMessage += "\n(Este é meu código de identificação para o sistema de atendimento)";
     }
     
     return baseMessage;
   }
 
-  // 🔥 INTERCEPTADOR ULTRA-ROBUSTO - Múltiplas estratégias
+  // INTERCEPTADOR para botões WhatsApp da página
   function interceptWhatsAppButtons() {
-    console.log('📱 [WHATSAPP] Configurando interceptador ultra-robusto...');
+    console.log('📱 [WHATSAPP] Configurando interceptador...');
     
-    // 🎯 ESTRATÉGIA 1: Event listener com múltiplas verificações
     document.addEventListener('click', function(e) {
       var target = e.target;
       var whatsappElement = null;
       var interceptReason = '';
       
-      console.log('🔍 [CLICK] Elemento clicado:', target);
-      
-      // 🔍 BUSCA PROFUNDA em vários níveis
       var attempts = 0;
       var searchTarget = target;
       
       while (searchTarget && attempts < 8) {
-        // Verificação 1: data-testid (react-whatsapp-button)
         if (searchTarget.getAttribute && searchTarget.getAttribute('data-testid') === 'floating-whatsapp-button') {
           whatsappElement = searchTarget;
           interceptReason = 'data-testid=floating-whatsapp-button';
           break;
         }
         
-        // Verificação 2: href com wa.me
         if (searchTarget.href && searchTarget.href.includes('wa.me')) {
           whatsappElement = searchTarget;
           interceptReason = 'href-wa.me';
           break;
         }
         
-        // Verificação 3: classes WhatsApp
         if (searchTarget.className && typeof searchTarget.className === 'string') {
           var className = searchTarget.className.toLowerCase();
           if (className.includes('whatsapp') || className.includes('wa-') || className.includes('float')) {
@@ -291,7 +625,6 @@
           }
         }
         
-        // Verificação 4: ID relacionado
         if (searchTarget.id && typeof searchTarget.id === 'string') {
           var id = searchTarget.id.toLowerCase();
           if (id.includes('whatsapp') || id.includes('wa-') || id.includes('float')) {
@@ -301,46 +634,21 @@
           }
         }
         
-        // Verificação 5: atributos React específicos
-        var attributes = searchTarget.attributes || [];
-        for (var i = 0; i < attributes.length; i++) {
-          var attr = attributes[i];
-          if (attr.name && attr.name.includes('whatsapp')) {
-            whatsappElement = searchTarget;
-            interceptReason = 'attribute-whatsapp';
-            break;
-          }
-        }
-        
-        if (whatsappElement) break;
-        
         searchTarget = searchTarget.parentElement;
         attempts++;
       }
       
       if (whatsappElement) {
-        console.log('🔥 [WHATSAPP] BOTÃO INTERCEPTADO!');
-        console.log('📍 Razão:', interceptReason);
-        console.log('🎯 Elemento:', whatsappElement);
-        console.log('🏷️ TagName:', whatsappElement.tagName);
-        console.log('🎨 ClassName:', whatsappElement.className);
-        console.log('🆔 ID:', whatsappElement.id);
+        console.log('🔥 [WHATSAPP] BOTÃO INTERCEPTADO!', interceptReason);
         
-        // Para TODOS os eventos
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
         
-        // Executar autorização
         authorizeWhatsAppSession('floating_button', {
           origem: 'Botão Flutuante Interceptado',
           site: 'm.lima',
-          intercept_method: interceptReason,
-          element_info: {
-            tagName: whatsappElement.tagName,
-            className: whatsappElement.className,
-            id: whatsappElement.id
-          }
+          intercept_method: interceptReason
         });
         
         return false;
@@ -350,13 +658,12 @@
       passive: false
     });
     
-    // 🎯 ESTRATÉGIA 2: Observer para botões criados dinamicamente
+    // Observer para botões criados dinamicamente
     var observer = new MutationObserver(function(mutations) {
       mutations.forEach(function(mutation) {
         if (mutation.type === 'childList') {
           mutation.addedNodes.forEach(function(node) {
             if (node.nodeType === Node.ELEMENT_NODE) {
-              // Procurar novos botões WhatsApp
               var selectors = [
                 '[data-testid="floating-whatsapp-button"]',
                 'a[href*="wa.me"]',
@@ -370,9 +677,8 @@
                 try {
                   var found = node.querySelectorAll ? node.querySelectorAll(selector) : [];
                   if (found.length > 0) {
-                    console.log('📱 [OBSERVER] Novos botões WhatsApp detectados:', selector, found.length);
+                    console.log('📱 [OBSERVER] Novos botões WhatsApp detectados:', found.length);
                     
-                    // Adicionar evento específico a cada novo botão
                     found.forEach(function(btn) {
                       btn.addEventListener('click', function(e) {
                         console.log('🔥 [OBSERVER] Botão WhatsApp clicado via Observer!');
@@ -392,22 +698,6 @@
                   // Ignorar erros de seletor
                 }
               });
-              
-              // Verificar se o próprio nó é um botão WhatsApp
-              if (node.getAttribute && node.getAttribute('data-testid') === 'floating-whatsapp-button') {
-                console.log('📱 [OBSERVER] Botão WhatsApp direto detectado!');
-                node.addEventListener('click', function(e) {
-                  console.log('🔥 [OBSERVER] Botão direto clicado!');
-                  e.preventDefault();
-                  e.stopPropagation();
-                  e.stopImmediatePropagation();
-                  
-                  authorizeWhatsAppSession('floating_button_direct', {
-                    origem: 'Botão Direto via Observer',
-                    site: 'm.lima'
-                  });
-                }, { capture: true, passive: false });
-              }
             }
           });
         }
@@ -419,94 +709,44 @@
       subtree: true
     });
     
-    // 🎯 ESTRATÉGIA 3: Interceptação por timer (fallback)
-    var checkInterval = setInterval(function() {
-      var floatingBtn = document.querySelector('[data-testid="floating-whatsapp-button"]');
-      if (floatingBtn && !floatingBtn.dataset.intercepted) {
-        console.log('📱 [TIMER] Botão WhatsApp encontrado por timer!');
-        floatingBtn.dataset.intercepted = 'true';
-        
-        floatingBtn.addEventListener('click', function(e) {
-          console.log('🔥 [TIMER] Botão via timer clicado!');
-          e.preventDefault();
-          e.stopPropagation();
-          e.stopImmediatePropagation();
-          
-          authorizeWhatsAppSession('floating_button_timer', {
-            origem: 'Botão via Timer',
-            site: 'm.lima'
-          });
-        }, { capture: true, passive: false });
-      }
-    }, 2000);
-    
-    // Limpar timer após 30 segundos
-    setTimeout(function() {
-      clearInterval(checkInterval);
-      console.log('⏰ [TIMER] Timer de interceptação finalizado');
-    }, 30000);
-    
-    // 🔥 INTERCEPTADOR ADICIONAL para links criados dinamicamente
-    var observer = new MutationObserver(function(mutations) {
-      mutations.forEach(function(mutation) {
-        if (mutation.type === 'childList') {
-          mutation.addedNodes.forEach(function(node) {
-            if (node.nodeType === Node.ELEMENT_NODE) {
-              // Verifica novos botões WhatsApp adicionados
-              var newWhatsAppButtons = node.querySelectorAll('[data-testid="floating-whatsapp-button"], a[href*="wa.me"], [class*="whatsapp"]');
-              if (newWhatsAppButtons.length > 0) {
-                console.log('📱 [WHATSAPP] Novos botões WhatsApp detectados:', newWhatsAppButtons.length);
-              }
-            }
-          });
-        }
-      });
-    });
-    
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true
-    });
-    
-    console.log('✅ [WHATSAPP] Interceptador configurado com sucesso!');
+    console.log('✅ [WHATSAPP] Interceptador configurado!');
   }
 
   // ============================================================================
-  // INICIALIZAÇÃO E EXPOSIÇÃO PÚBLICA
+  // INICIALIZAÇÃO
   // ============================================================================
 
-  // Inicialização principal
   function initialize() {
-    console.log('🚀 Inicializando Chat + WhatsApp Integration v2.0...');
+    console.log('🚀 Inicializando Chat + WhatsApp Integration v4.0 CORRIGIDO...');
     console.log('🔧 Backend URL:', API_BASE_URL);
     console.log('📱 WhatsApp Comercial:', COMMERCIAL_WHATSAPP);
-    console.log('🎯 Usando interceptação robusta v2.0');
     
-    // Inicializar chat
+    // Inicializar chat da landing page
     mountChatUI();
     
-    // Configurar integração WhatsApp (versão corrigida)
+    // Configurar interceptação de botões WhatsApp externos
     setTimeout(function() {
       interceptWhatsAppButtons();
     }, 1000);
     
-    // 🔥 TESTE automático se estiver em desenvolvimento
     if (window.location.hostname === 'localhost' || window.location.hostname.includes('127.0.0.1')) {
       console.log('🧪 [DEV] Modo desenvolvimento detectado');
       window.testWhatsApp = function() {
-        authorizeWhatsAppSession('dev_test', { test: true, timestamp: new Date().toISOString() });
+        authorizeWhatsAppSession('dev_test', { 
+          test: true, 
+          timestamp: new Date().toISOString()
+        });
       };
     }
   }
 
-  // Event listener para inicialização
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initialize);
   } else {
     initialize();
   }
 
-  // Configurar botão launcher do chat (se existir)
+  // Chat launcher
   document.addEventListener('DOMContentLoaded', function() {
     var launcher = document.getElementById('chat-launcher');
     if(launcher) {
@@ -520,10 +760,10 @@
   });
 
   // ============================================================================
-  // API PÚBLICA - VERSÃO EXPANDIDA
+  // API PÚBLICA CORRIGIDA
   // ============================================================================
 
-  // Expor funcionalidades do Chat
+  // Chat da landing page (coleta dados apenas)
   window.ChatWidget = {
     setBackend: function(url) { 
       API_BASE_URL = url; 
@@ -533,16 +773,36 @@
     sendMessage: sendChatMessage,
     addMessage: addChatMessage,
     clearSession: function() {
-      localStorage.removeItem('chat_session_id');
+      chatState.currentSessionId = null;
+      chatState.conversationData = {};
+      localStorage.removeItem('chat_session_data');
       console.log('🧹 Sessão do chat limpa');
+    },
+    getState: function() {
+      return {
+        isLoading: chatState.isLoading,
+        rateLimited: chatState.rateLimited,
+        sessionId: chatState.currentSessionId,
+        conversationData: chatState.conversationData,
+        lastCorrelationId: chatState.lastCorrelationId
+      };
     },
     startConversation: function() {
       console.log('🔧 Iniciando conversa manualmente...');
       addChatMessage("Conversa iniciada! Digite 'oi' para começar.", 'bot');
+    },
+    validateData: function(data) {
+      return {
+        name: Validators.name(data.name),
+        phone: Validators.phone(data.phone),
+        email: Validators.email(data.email),
+        legalArea: Validators.legalArea(data.legalArea),
+        description: Validators.description(data.description)
+      };
     }
   };
 
-  // 🔥 API EXPANDIDA do WhatsApp com DEBUG
+  // WhatsApp Integration (apenas para botões externos da página)
   window.WhatsAppIntegration = {
     test: function(source) {
       console.log('🧪 Testando integração WhatsApp...');
@@ -580,7 +840,6 @@
       localStorage.removeItem('whatsapp_authorized_at');
       console.log('🧹 Sessão WhatsApp limpa');
     },
-    // 🔥 NOVA FUNÇÃO DE DEBUG
     debugElements: function() {
       console.log('🔍 [DEBUG] Procurando elementos WhatsApp na página...');
       
@@ -600,8 +859,6 @@
             console.log(`✅ Encontrado ${elements.length} elemento(s) com: ${selector}`);
             elements.forEach(function(el, index) {
               console.log(`   [${index}] TagName: ${el.tagName}, Class: "${el.className}", ID: "${el.id}"`);
-              console.log(`   [${index}] Texto: "${el.textContent ? el.textContent.substring(0, 50) : 'N/A'}"`);
-              console.log(`   [${index}] Elemento:`, el);
             });
           } else {
             console.log(`❌ Nenhum elemento encontrado para: ${selector}`);
@@ -611,35 +868,11 @@
         }
       });
       
-      // Buscar por texto "WhatsApp" em botões
-      var allButtons = document.querySelectorAll('button, a');
-      var whatsappButtons = [];
-      allButtons.forEach(function(btn) {
-        var text = (btn.textContent || '').toLowerCase();
-        var title = (btn.title || '').toLowerCase();
-        var ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
-        
-        if (text.includes('whatsapp') || title.includes('whatsapp') || ariaLabel.includes('whatsapp')) {
-          whatsappButtons.push(btn);
-        }
-      });
-      
-      if (whatsappButtons.length > 0) {
-        console.log(`✅ Encontrado ${whatsappButtons.length} botão(ões) com texto "WhatsApp":`);
-        whatsappButtons.forEach(function(btn, index) {
-          console.log(`   [${index}] Elemento:`, btn);
-        });
-      } else {
-        console.log(`❌ Nenhum botão com texto "WhatsApp" encontrado`);
-      }
-      
       return {
         total_found: selectors.reduce((acc, sel) => acc + document.querySelectorAll(sel).length, 0),
-        whatsapp_text_buttons: whatsappButtons.length,
         selectors_tested: selectors.length
       };
     },
-    // 🔥 FUNÇÃO PARA FORÇAR INTERCEPTAÇÃO DE ELEMENTO ESPECÍFICO
     forceIntercept: function(elementSelector) {
       console.log('🎯 [FORCE] Forçando interceptação em:', elementSelector);
       
@@ -649,9 +882,6 @@
         return false;
       }
       
-      console.log('✅ [FORCE] Elemento encontrado:', element);
-      
-      // Adicionar listener específico
       element.addEventListener('click', function(e) {
         console.log('🔥 [FORCE] Elemento interceptado via forceIntercept!');
         e.preventDefault();
@@ -661,13 +891,7 @@
         authorizeWhatsAppSession('force_intercept', {
           origem: 'Interceptação Forçada',
           site: 'm.lima',
-          selector: elementSelector,
-          element_info: {
-            tagName: element.tagName,
-            className: element.className,
-            id: element.id,
-            text: element.textContent
-          }
+          selector: elementSelector
         });
       }, { capture: true, passive: false });
       
@@ -676,13 +900,14 @@
     }
   };
 
-  console.log('✅ Chat.js v2.0 carregado completamente!');
-  console.log('💡 Use ChatWidget.* ou WhatsAppIntegration.* no console para debug');
-  console.log('🔥 CORREÇÕES APLICADAS:');
-  console.log('   - Endpoint correto /api/v1/whatsapp/authorize');
-  console.log('   - Timeout e error handling melhorados');
-  console.log('   - Session tracking implementado');
-  console.log('   - Interceptação mais robusta');
-  console.log('   - Fallback melhorado');
-
+  console.log('✅ Chat.js v4.0 CORRIGIDO carregado completamente!');
+  console.log('🔧 ARQUITETURA CORRIGIDA:');
+  console.log('   ✅ FLUXO 1: Chat da landing - APENAS coleta dados');
+  console.log('   ✅ FLUXO 2: Botões WhatsApp - APENAS autoriza e abre WhatsApp');
+  console.log('   ❌ REMOVIDO: Botões WhatsApp dentro do chat');
+  console.log('   ❌ REMOVIDO: Redirecionamento do chat para WhatsApp');
+  console.log('   ❌ REMOVIDO: Lógica de acionamento de advogados no frontend');
+  console.log('   ✅ Validação rigorosa de dados implementada');
+  console.log('   ✅ Mensagem final simples sem botões');
+  console.log('💡 Use ChatWidget.* para chat ou WhatsAppIntegration.* para WhatsApp no console');
 })();
