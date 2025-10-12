@@ -23,7 +23,7 @@ class ChatWidget {
         if (hostname === 'localhost' || hostname === '127.0.0.1') {
             return 'http://localhost:8000';
         } else {
-            return 'https://law-firm-backend-936902782519-936902782519.us-central1.run.app';
+            return 'https://law-firm-backend-936902782519.us-central1.run.app';
         }
     }
 
