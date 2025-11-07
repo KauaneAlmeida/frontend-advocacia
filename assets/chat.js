@@ -195,12 +195,26 @@ class ChatWidget {
         const messagesContainer = document.getElementById('chat-messages');
         const messageDiv = document.createElement('div');
         messageDiv.className = 'message bot';
+        
+        // 🎨 Converter markdown para HTML (negrito e quebras de linha)
+        const formattedMessage = this.formatMarkdown(message);
+        
         messageDiv.innerHTML = `
             <img src="assets/bot.png" alt="Bot" class="avatar">
-            <div class="bubble">${message}</div>
+            <div class="bubble">${formattedMessage}</div>
         `;
         messagesContainer.appendChild(messageDiv);
         this.scrollToBottom();
+    }
+
+    formatMarkdown(text) {
+        // Converter **texto** em <strong>texto</strong>
+        let formatted = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        
+        // Converter quebras de linha \n em <br>
+        formatted = formatted.replace(/\n/g, '<br>');
+        
+        return formatted;
     }
 
     addUserMessage(message) {
