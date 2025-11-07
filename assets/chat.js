@@ -51,7 +51,7 @@ class ChatWidget {
         chatRoot.innerHTML = `
             <div class="chat-container">
                 <div class="chat-header">
-                    💼 Chat Advocacia — Escritório m.lima
+                    Chat Advocacia — Escritório m.lima
                     <button class="chat-close-btn">×</button>
                     <div class="progress-bar"><div class="progress-fill"></div></div>
                 </div>
