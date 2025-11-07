@@ -165,9 +165,18 @@ class ChatWidget {
             });
 
             const data = await response.json();
-            this.hideTypingIndicator();
-            this.addBotMessage(data.response);
-            this.enableInput();
+            
+            // ⏱️ Delay mínimo de 1.5 segundos para parecer mais natural
+            const minDelay = 1500;
+            const startTime = Date.now();
+            const elapsed = Date.now() - startTime;
+            const remainingDelay = Math.max(0, minDelay - elapsed);
+            
+            setTimeout(() => {
+                this.hideTypingIndicator();
+                this.addBotMessage(data.response);
+                this.enableInput();
+            }, remainingDelay);
         } catch (error) {
             console.error('❌ Erro ao enviar mensagem:', error);
             this.hideTypingIndicator();
